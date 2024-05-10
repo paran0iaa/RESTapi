@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -41,7 +40,13 @@ var tasks = map[string]Task{
 }
 
 func getTasks(w http.ResponseWriter, r *http.Request) {
-	resp, err := json.Marshal(tasks)
+	var tasksSlice []Task
+
+	for _, task := range tasks {
+		tasksSlice = append(tasksSlice, task)
+	}
+
+	resp, err := json.Marshal(tasksSlice)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -51,21 +56,38 @@ func getTasks(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
-func postTasks(w http.ResponseWriter, r *http.Request) {
-	var task Task
-	var buf bytes.Buffer
+func createTask(w http.ResponseWriter, r *http.Request) {
 
-	_, err := buf.ReadFrom(r.Body)
+	var task Task
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&task)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err = json.Unmarshal(buf.Bytes(), &task); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+
+	// Валидация значений полей
+	if task.ID == "" || task.Description == "" {
+		http.Error(w, "ID и Description не могут быть пустыми", http.StatusBadRequest)
 		return
 	}
 
-	tasks[task.ID] = task
+	// Проверка на отсутствие applications
+	if len(task.Applications) == 0 {
+		// Добавить User-Agent из запроса в applications
+		task.Applications = append(task.Applications, r.UserAgent())
+	}
+
+	if existingTask, ok := tasks[task.ID]; ok {
+		// Обновляем задачу
+		existingTask.Description = task.Description
+		existingTask.Note = task.Note
+		existingTask.Applications = task.Applications
+		tasks[task.ID] = existingTask
+	} else {
+		// Добавляем новую задачу
+		tasks[task.ID] = task
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -108,7 +130,7 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Get("/tasks", getTasks)
-	r.Post("/tasks", postTasks)
+	r.Post("/tasks", createTask)
 	r.Get("/tasks/{id}", getTasksID)
 	r.Delete("/tasks/{id}", delTasksID)
 
